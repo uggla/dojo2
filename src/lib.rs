@@ -5,9 +5,29 @@ fn add(left: usize, right: usize) -> usize {
     left + right
 }
 
-fn calculate_price<T: Into<f64>>(quantity: u32, item_price: T, tax_rate: Option<f64>) -> f64 {
+pub struct Percentage(f64);
+
+impl Percentage {
+    pub fn new(value: impl Into<f64>) -> Self {
+        let value = value.into();
+        if !(0.0..=100.0).contains(&value) {
+            panic!("Percentage must be between 0 and 100");
+        }
+        Self(value)
+    }
+
+    pub fn get(&self) -> f64 {
+        self.0
+    }
+}
+
+fn calculate_price<T: Into<f64>>(
+    quantity: u32,
+    item_price: T,
+    tax_rate: Option<Percentage>,
+) -> f64 {
     let tax_rate = match tax_rate {
-        Some(tax_rate) => tax_rate / 100.0,
+        Some(tax_rate) => tax_rate.0 / 100.0,
         None => 0.0,
     };
     apply_discount(quantity as f64 * item_price.into()) * (1.0 + tax_rate)
@@ -16,7 +36,7 @@ fn calculate_price<T: Into<f64>>(quantity: u32, item_price: T, tax_rate: Option<
 pub fn calculate_price_formated<T: Into<f64>>(
     quantity: u32,
     item_price: T,
-    tax_rate: Option<f64>,
+    tax_rate: Option<Percentage>,
 ) -> String {
     format!("{:.2} €", calculate_price(quantity, item_price, tax_rate))
 }
@@ -57,7 +77,7 @@ mod tests {
 
     #[test]
     fn test_calculate_price_with_taxe() {
-        assert_eq!(calculate_price(2, 10, Some(20.0)), 24.0);
+        assert_eq!(calculate_price(2, 10, Some(Percentage::new(20.0))), 24.0);
     }
 
     #[test]
@@ -72,12 +92,12 @@ mod tests {
 
     #[test]
     fn test_calculate_price_tc2() {
-        assert_eq!(calculate_price(3, 1.21, Some(5.0)), 3.8115);
+        assert_eq!(calculate_price(3, 1.21, Some(Percentage::new(5.0))), 3.8115);
     }
 
     #[test]
     fn test_calculate_price_tc3() {
-        assert_eq!(calculate_price(3, 1.21, Some(20.0)), 4.356);
+        assert_eq!(calculate_price(3, 1.21, Some(Percentage(20.0))), 4.356);
     }
 
     #[test]
@@ -91,7 +111,7 @@ mod tests {
     #[test]
     fn test_calculate_price_formated_tc2() {
         assert_eq!(
-            calculate_price_formated(3, 1.21, Some(5.0)),
+            calculate_price_formated(3, 1.21, Some(Percentage(5.0))),
             String::from("3.81 €")
         );
     }
@@ -99,7 +119,7 @@ mod tests {
     #[test]
     fn test_calculate_price_formated_tc3() {
         assert_eq!(
-            calculate_price_formated(3, 1.21, Some(20.0)),
+            calculate_price_formated(3, 1.21, Some(Percentage(20.0))),
             String::from("4.36 €")
         );
     }
@@ -107,7 +127,7 @@ mod tests {
     #[test]
     fn test_calculate_price_formated_with_discount_tc1() {
         assert_eq!(
-            calculate_price_formated(5, 345, Some(10.0)),
+            calculate_price_formated(5, 345, Some(Percentage(10.0))),
             String::from("1840.58 €")
         );
     }
@@ -115,7 +135,7 @@ mod tests {
     #[test]
     fn test_calculate_price_formated_with_discount_tc2() {
         assert_eq!(
-            calculate_price_formated(5, 1299, Some(10.0)),
+            calculate_price_formated(5, 1299, Some(Percentage(10.0))),
             String::from("6787.28 €")
         );
     }
@@ -134,5 +154,27 @@ mod tests {
             convert_currency(20.0, Currency::Zorglub),
             String::from("60.00 Zorglub")
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "Percentage must be between 0 and 100")]
+    fn test_percentage_boundary_high() {
+        Percentage::new(200.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Percentage must be between 0 and 100")]
+    fn test_percentage_boundary_low() {
+        Percentage::new(-20.0);
+    }
+
+    #[test]
+    fn test_percentage_various_type1() {
+        assert_eq!(Percentage::new(20).get(), 20.0);
+    }
+
+    #[test]
+    fn test_percentage_various_type2() {
+        assert_eq!(Percentage::new(20.0).get(), 20.0);
     }
 }
