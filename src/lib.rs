@@ -1,6 +1,9 @@
 // Remove warnings about unused code this should be removed for production use
 #![allow(dead_code)]
 
+use serde_json::Value;
+use url::Url;
+
 fn add(left: usize, right: usize) -> usize {
     left + right
 }
@@ -54,12 +57,72 @@ fn apply_discount(price: f64) -> f64 {
 pub enum Currency {
     Krupnic,
     Zorglub,
+    Usd,
 }
 
-pub fn convert_currency(euros: f64, currency: Currency) -> String {
+#[derive(Debug)]
+pub enum Error {
+    RequestFailed,
+    ValueNotFound,
+    JsonParsingError(minreq::Error),
+}
+
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        // Clippy would rather use the matches! macro but allow standard
+        // pattern matching to no confuse newcomers.
+        #[allow(clippy::match_like_matches_macro)]
+        match (self, other) {
+            (Error::RequestFailed, Error::RequestFailed) => true,
+            (Error::ValueNotFound, Error::ValueNotFound) => true,
+            (Error::JsonParsingError(_), Error::JsonParsingError(_)) => true,
+            _ => false,
+        }
+    }
+}
+
+pub trait HttpClient {
+    fn get_usd(&self) -> Result<f64, Error>;
+}
+
+struct FakeClient(Url);
+
+impl HttpClient for FakeClient {
+    fn get_usd(&self) -> Result<f64, Error> {
+        Ok(1.2)
+    }
+}
+
+pub struct MinreqClient(pub Url);
+
+impl HttpClient for MinreqClient {
+    fn get_usd(&self) -> Result<f64, Error> {
+        // TODO:
+        // Clearly this should be refactor as we can not test if the currency is not found or json
+        // parsing error
+        let url: minreq::URL = self.0.to_string();
+        let currency = minreq::get(url)
+            .send()
+            .map_err(|_| Error::RequestFailed)?
+            .json::<Value>()
+            .map_err(Error::JsonParsingError)?;
+        let rate = currency["rates"]["USD"]
+            .as_f64()
+            .ok_or(Error::ValueNotFound)?;
+        dbg!(rate);
+        Ok(rate)
+    }
+}
+
+pub fn convert_currency(
+    euros: f64,
+    currency: Currency,
+    httpclient: impl HttpClient,
+) -> Result<String, Error> {
     match currency {
-        Currency::Krupnic => format!("{:.2} Krupnic", euros * 2.0),
-        Currency::Zorglub => format!("{:.2} Zorglub", euros * 3.0),
+        Currency::Krupnic => Ok(format!("{:.2} Krupnic", euros * 2.0)),
+        Currency::Zorglub => Ok(format!("{:.2} Zorglub", euros * 3.0)),
+        Currency::Usd => Ok(format!("{:.2} $", euros * httpclient.get_usd()?)),
     }
 }
 
@@ -143,7 +206,12 @@ mod tests {
     #[test]
     fn test_convert_currency_krupnic_tc1() {
         assert_eq!(
-            convert_currency(20.0, Currency::Krupnic),
+            convert_currency(
+                20.0,
+                Currency::Krupnic,
+                FakeClient(Url::parse("http://localhost").unwrap())
+            )
+            .unwrap(),
             String::from("40.00 Krupnic")
         );
     }
@@ -151,8 +219,53 @@ mod tests {
     #[test]
     fn test_convert_currency_krupnic_tc2() {
         assert_eq!(
-            convert_currency(20.0, Currency::Zorglub),
+            convert_currency(
+                20.0,
+                Currency::Zorglub,
+                FakeClient(Url::parse("http://localhost").unwrap())
+            )
+            .unwrap(),
             String::from("60.00 Zorglub")
+        );
+    }
+
+    #[test]
+    fn test_convert_currency_usd_fake_client() {
+        assert_eq!(
+            convert_currency(
+                20.0,
+                Currency::Usd,
+                FakeClient(Url::parse("http://localhost").unwrap())
+            )
+            .unwrap(),
+            String::from("24.00 $")
+        );
+    }
+
+    #[test]
+    fn test_convert_currency_usd2() {
+        // This test is not good because it depends on an external service
+        // but this is only to show how it works
+        let dollars = convert_currency(
+            25.0,
+            Currency::Usd,
+            MinreqClient(Url::parse("https://open.er-api.com/v6/latest/EUR").unwrap()),
+        )
+        .unwrap();
+        assert_eq!(dollars.ends_with(" $"), true);
+        assert_eq!(dollars.starts_with("2"), true);
+    }
+
+    #[test]
+    fn test_convert_currency_connection_failed() {
+        assert_eq!(
+            convert_currency(
+                20.0,
+                Currency::Usd,
+                MinreqClient(Url::parse("https://localhost/currency").unwrap())
+            )
+            .unwrap_err(),
+            Error::RequestFailed
         );
     }
 
